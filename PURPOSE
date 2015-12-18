@@ -1,0 +1,68 @@
+Therapyst
+
+###### PURPOSE #######
+
+Message Queues (MQs) exist as a way of handling an arbitrary communication
+scenarios between processes and servers.  MQs have the advantage of flexibility
+and power to create just about any imaginable configuration scenario.
+
+However: MQs often require either a bulky framework which handles setting up
+these complex scenarios, or they provide the tools to write your own custom
+lightweight framework, but come with just a basic template or no template at
+all.
+
+For my particular scenario, SSH is usually used to drive an array of server
+machines.  SSH is too heavy of a protocol to handle the number of remote servers
+I need from a single control point.  This microframework is designed to handle
+this specific messaging scenario.  Specifically, a single controller (Therapyst)
+and many controlled servers (Clients)
+
+###### Architecture ######
+
+I like to think of it as a therapist giving their Clients advice on how to act
+in order to better their lives.  The Clients want to get better, so they follow
+the therapist's advice and report back the results of their actions, then wait
+for more advice.
+
+Clients can be grouped and communicated with either "1-on-1" or in 
+"group-therapy".  We'll refer to group of clients who recieve advice from a
+Therapyst as a "TherapyGroup" (TG)
+
+Ideally this framework will be implemented as a MQ wrapper (with SSH fallback)
+which sets up a messaging scenario in this architechture:
+
+                        ------------------
+                        |    Therapyst   |
+                        ------------------
+                      /          |        \
+                     /           |         \
+     ------------------  ------------------  ------------------
+     |     Client     |  |     Client     |  |     Client     |
+     |    (Group 1)   |  |    (Group 1)   |  |    (Group 2)   |
+     ------------------  ------------------  ------------------
+
+This should be as simple to set up as possible.  Ideally the user should only
+have to provide a hostname (or ipaddress) for each Client and ssh login
+credentials (just for installation).  Then the framework handles setting up
+the Clients to take commands from the Therapyst.
+
+Standard use of this pattern would be to execute commands on each of clients
+and report the results to the sender syncronously (but in parallel).  This means
+a single command send from the Therapyst to a TG will be executed on each client
+simultaneously and reported back whenever the Client finishes.  The Therapyst
+will have the option of blocking additional execution until all Clients have
+reported back, or when a certain percentage have.
+
+Optional:  Give user ability to have a specific Exception be raised when a
+Client hasn't reported back by a 
+
+
+
+###### Security ######
+
+We should provide a level of security to Therapyst-Client communications.  This
+should ideally be a certificate certification to ensure the clients are only
+executing commands from a trusted Therapyst, since they'll be listening on an
+open socket.  Client-Therapyst communication is confidential :P
+
+
