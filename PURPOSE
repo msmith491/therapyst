@@ -24,7 +24,7 @@ in order to better their lives.  The Clients want to get better, so they follow
 the therapist's advice and report back the results of their actions, then wait
 for more advice.
 
-Clients can be grouped and communicated with either "1-on-1" or in 
+Clients can be grouped and communicated with either "1-on-1" or in
 "group-therapy".  We'll refer to group of clients who recieve advice from a
 Therapyst as a "TherapyGroup" (TG)
 
@@ -53,10 +53,13 @@ simultaneously and reported back whenever the Client finishes.  The Therapyst
 will have the option of blocking additional execution until all Clients have
 reported back, or when a certain percentage have.
 
-Optional:  Give user ability to have a specific Exception be raised when a
-Client hasn't reported back by a 
+Note:  Give user ability to have a specific Exception be raised when a
+Client hasn't reported back within a timeout (maybe enact the timeout after a
+quorum of Clients within a group have reported back)
 
-
+Command execution may be the normal use case, but don't preclude something else.
+Sending data for consumption could be a valid use case.  Providing a switch of
+some sort would be good to give flexibility without adding complexity to setup.
 
 ###### Security ######
 
@@ -64,5 +67,96 @@ We should provide a level of security to Therapyst-Client communications.  This
 should ideally be a certificate certification to ensure the clients are only
 executing commands from a trusted Therapyst, since they'll be listening on an
 open socket.  Client-Therapyst communication is confidential :P
+
+Make sure to use a proven crypto library instead of rolling your own.
+
+###### Shell Execution ######
+
+Since command execution is the primary focus, data sent will by default be
+be assumed to be compatible with subprocess.check_output() after being run
+through shlex.split().  This means commands don't need to be pre-split before
+sending, and can just be unicode strings or byte strings.  Authentication will
+occur during each transfer of information and check_output will have shell=False.
+This *should* mean we don't need to sanitize input since it will be from a
+trusted source.
+
+Note: I'm not sure if we'll want to add direct RPC calling.  Command execution
+should be enough (as a lightweight replacement for SSH on a scale node setup)
+because frameworks already exist to push python commands directly (eg. pushy)
+This might be different because it's designed for scale.
+
+###### Client Availability #####
+
+The Therapyst needs to know what clients are available to execute commands.
+Part of the nature of this sort of execution strategy is that clients will go
+down for various reasons and we need to make sure the framework handles this.
+This consists of two parts:
+
+1. Therapyst registration of clients and availability monitoring
+2. Client process restart (watchdog) and reconnect
+
+Even when not sending commands to Clients, the Therapyst will send heartbeat
+updates which the Client has to respond to within a certain number (timeout 
+or heartbeats) or it will be marked unavailable and an Exception will be 
+raised unless supressed by the user settings.
+
+When sending to a TG, the Therapyst will take into account which hosts are
+currently available in the TG and only send to them.
+
+Note: Allow user to specify if TGs are flexible.  If they are, Clients can be
+added and removed without issue.  Advice to TG will send to any available
+Clients.  Otherwise an Exception will be raised if the TG availability or
+size changes (don't want to accidentally send to unintentional Clients, or not
+send to Clients who we want to ensure get Advice)
+
+
+####### Data Structures ######
+
+Therapyst --> Client
+--------------------
+Advice:
+    - dictonary subclass/defaultdict?
+    - required keys: cmd,
+                     error_expected
+
+BulkAdvice:
+    - array of messages to be executed in order
+    - implied error_expected=False?  Will return early on any error
+
+Client --> Therapyst
+--------------------
+Rant:
+    - dictonary subclass/defaultdict?
+    - required keys: result,
+                     error_code,
+                     cmd (so we know which cmd got which result)
+
+BulkRant:
+    - array of results in the same order as their commands
+    - (Maybe we should index them by cmd?)
+
+
+Therapyst Only
+--------------
+Client:
+    - name
+    - ipaddress (hostname)
+    - port
+    - available
+    - last_heartbeat
+    - last_advice
+    - last_reply
+
+TherapyGroup:
+    - name
+    - hosts
+
+Groups:
+    - dict of available groups to mass send to, indexed by name
+
+GroupTherapyRant (FilingCabinet?):
+    - dictionary indexed by Client
+
+
 
 
