@@ -1,0 +1,12 @@
+##### Operating System Requirements For Package Install #####
+
+python2.7+ or python3.2+
+python-virtualenv
+
+If using python3:
+    python3-dev (debian)
+    python3-devel (centos)
+
+If using python2:
+    python-dev (debian)
+    python-devel (centos)

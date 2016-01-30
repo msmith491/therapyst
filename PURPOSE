@@ -109,6 +109,12 @@ Clients.  Otherwise an Exception will be raised if the TG availability or
 size changes (don't want to accidentally send to unintentional Clients, or not
 send to Clients who we want to ensure get Advice)
 
+####### Therapyst Implementation ######
+
+This should probably be run as a set of persistent worker threads taking
+jobs off the AdviceQueue.  There should be as many threads as the maximum
+number of workers in a group to ensure all items in the queue are executed
+as close to simultaneously as possible (since we'll just be IO bound)
 
 ####### Data Structures ######
 
@@ -156,6 +162,10 @@ Groups:
 
 GroupTherapyRant (FilingCabinet?):
     - dictionary indexed by Client
+
+AdviceQueue
+    - FIFO Queue object
+    - Contains Advice objects
 
 
 

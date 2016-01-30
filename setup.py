@@ -15,9 +15,10 @@ setup(
     packages=['therapyst'],
     package_dir={'therapyst': 'therapyst'},
     include_package_data=True,
-    install_requires=['pyzmq'],
+    install_requires=['pyzmq', 'simplejson'],
     license='MIT License',
     zip_safe=True,
+    use_3to2=True,
     classifiers=(
         'Development Status :: 1 - Planning',
         'Intended Audience :: Developers',
