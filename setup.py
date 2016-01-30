@@ -1,9 +1,25 @@
 #!/usr/bin/env python
 
+import sys
+
 try:
     from setuptools import setup
 except ImportError:
     from distutils.core import setup
+
+PYTHON2_VERSION = (2, 7)
+PYTHON3_VERSION = (3, 0)
+PYTHON3_MIN = (3, 2)
+
+python2 = False
+if PYTHON2_VERSION <= sys.version_info <= PYTHON3_VERSION:
+    python2 = True
+
+if not python2 and (sys.version_info < PYTHON3_MIN or
+                    sys.version_info < PYTHON2_VERSION):
+    raise ValueError("Unsupported Python Version")
+
+# TODO Do something about installing for Python 2.7
 
 setup(
     name='therapyst',
@@ -26,7 +42,6 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
