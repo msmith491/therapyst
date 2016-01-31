@@ -22,7 +22,7 @@ LOG = logging.getLogger(__name__)
 
 DAEMON_DEFAULT_PORT = 5556
 REMOTE_DIR = "therapyst"
-REMOTE_BINARY = "client.py"
+REMOTE_BINARY = "therapyst/client.py"
 REMOTE_VENV = "therapyst_venv"
 REMOTE_VENV_PYTHON = "/".join((REMOTE_VENV, "bin", "python"))
 REMOTE_VENV_PIP = "/".join((REMOTE_VENV, "bin", "pip"))
@@ -30,11 +30,8 @@ REMOTE_EXECUTE = "/".join((REMOTE_DIR, REMOTE_BINARY))
 
 LOCAL_FOLDER = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 
-try:
-    REQUIREMENTS = open("/".join((
-        LOCAL_FOLDER, "..", "requirements.txt"))).read().strip().replace("\n", " ")
-except FileNotFoundError:
-    REQUIREMENTS = ""
+REQUIREMENTS = open("/".join((
+    LOCAL_FOLDER, "requirements.txt"))).read().strip().replace("\n", " ")
 
 
 class Client():
@@ -161,11 +158,15 @@ class Client():
         os.chdir(os.path.split(localpath)[0])
         parent = os.path.split(localpath)[1]
         for walker in os.walk(parent):
+            if walker[0] in ["build", "dist"]:
+                continue
             try:
                 sftp.mkdir(os.path.join(remotepath, walker[0]))
             except IOError as e:
                 print(e)
             for file in walker[2]:
+                if file.endswith("egg-info"):
+                    continue
                 sftp.put(os.path.join(walker[0], file), os.path.join(
                     remotepath, walker[0], file))
 
