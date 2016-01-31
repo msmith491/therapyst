@@ -2,14 +2,15 @@
 
 from collections import namedtuple
 from queue import Queue
+from uuid import uuid4
 
-Advice = namedtuple("Advice", "cmd error_expected type")
-Advice.__new__.__defaults__ = ("", False, "shell")
+Advice = namedtuple("Advice", "cmd error_expected type id")
+Advice.__new__.__defaults__ = ("", False, "shell", uuid4())
 
 HEARTBEAT = Advice(None, None, "heartbeat")
 
-Rant = namedtuple("Rant", "result error_code advice")
-Rant.__new__.__defaults__ = ("", None, "")
+Rant = namedtuple("Rant", "result error_code advice id")
+Rant.__new__.__defaults__ = ("", None, "", uuid4())
 
 
 class AdviceQueue(Queue):

@@ -20,9 +20,10 @@ from therapyst.data import Advice, Rant, AdviceQueue, RantQueue, HEARTBEAT
 
 LOG = logging.getLogger(__name__)
 
-DAEMON_DEFAULT_PORT = 5556
+RANT_DEFAULT_PORT = 5556
+ADVICE_DEFAULT_PORT = 5557
 REMOTE_DIR = "therapyst"
-REMOTE_BINARY = "therapyst/client.py"
+REMOTE_BINARY = "/".join(("therapyst", os.path.basename(__file__)))
 REMOTE_VENV = "therapyst_venv"
 REMOTE_VENV_PYTHON = "/".join((REMOTE_VENV, "bin", "python"))
 REMOTE_VENV_PIP = "/".join((REMOTE_VENV, "bin", "pip"))
@@ -46,28 +47,43 @@ class Client():
             username,
             password,
             name=None,
-            connect_port=DAEMON_DEFAULT_PORT,
+            rant_port=RANT_DEFAULT_PORT,
+            advice_port=ADVICE_DEFAULT_PORT,
             protocol="tcp"):
         self.ip = ip
         self.username = username
         self.password = password
         self.name = name if name else self._gen_name()
-        self.connect_port = connect_port
+        self.advice_port = advice_port
+        self.rant_port = rant_port
         self.protocol = protocol
         self.socket = zmq.Context().socket(zmq.REQ)
         self.python_version = None
         self._ssh = None
         self.heartbeat = None
         self.heartbeat_interval = 5
+        self.rants = {}
+
+    def _get_socket(self):
+        return self.context.socket(zmq.REQ)
 
     def send(self, advice):
         self.socket.connect("{}://{}:{}".format(self.protocol,
                                                 self.ip,
-                                                self.connect_port))
+                                                self.advice_port))
         self.socket.send_unicode(simplejson.dumps(advice._asdict()))
         resp = simplejson.loads(self.socket.recv_unicode())
         rant = Rant(resp['result'], resp['error_code'], resp['advice'])
         return rant
+
+    def results_listener(self):
+        self.socket.connect("{}://{}:{}".format(self.protocol,
+                                                self.ip,
+                                                self.advice_port))
+        while True:
+            rant = self.socket.recv_unicode()
+            self.rants[rant.id] = rant
+            self.socket.send_unicode("Recieved results: {}".format(rant.id))
 
     def run_heartbeat(self):
         while True:
@@ -75,7 +91,7 @@ class Client():
             sleep(self.heartbeat_interval)
             self.socket.connect("{}://{}:{}".format(self.protocol,
                                                     self.ip,
-                                                    self.connect_port))
+                                                    self.advice_port))
             self.socket.send_unicode(simplejson.dumps(HEARTBEAT))
             resp = simplejson.loads(self.socket.recv_unicode())
             rant = Rant(resp['result'], resp['error_code'], resp['advice'])
@@ -145,6 +161,7 @@ class Client():
             raise EnvironmentError("virtualenv package in required")
 
         self._exec_command("{} install {}".format(REMOTE_VENV_PIP, REQUIREMENTS))
+        self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP, REMOTE_DIR))
 
     def _install_linux(self):
         sftp = self._setup_ssh().open_sftp()
@@ -190,10 +207,12 @@ class ClientDaemon():
     Daemon process running on the client
     """
 
-    def __init__(self, bind_port=DAEMON_DEFAULT_PORT, log=LOG, max_threads=10,
+    def __init__(self, advice_port=ADVICE_DEFAULT_PORT,
+                 rant_port=RANT_DEFAULT_PORT, log=LOG, max_threads=10,
                  protocol="tcp"):
-        self.bind_port = bind_port
-        self.socket = zmq.Context().socket(zmq.REP)
+        self.advice_port = advice_port
+        self.rant_port = rant_port
+        self.context = zmq.Context()
         self.log = log
         self.protocol = protocol
         self.threads = []
@@ -201,8 +220,12 @@ class ClientDaemon():
         self.advice_queue = AdviceQueue()
         self.rant_queue = RantQueue()
 
-    def _start_threads(self):
-        pass
+    def start(self):
+        listener = threading.Thread(target=self._listen)
+        listener.start()
+
+    def _get_socket(self):
+        return self.context.socket(zmq.REP)
 
     def _json_to_pyobj(self, string):
         json = simplejson.loads(string)
@@ -216,33 +239,45 @@ class ClientDaemon():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT)
         result = proc.communicate()[0]
-        rant = Rant(result, proc.returncode, advice)
+        rant = Rant(result, proc.returncode, advice, advice.id)
         print("Result: {}".format(result))
         return rant
 
     @staticmethod
     def _handle_heartbeat(advice):
-        rant = Rant("heartbeat_reply", 0, advice)
+        rant = Rant("heartbeat_reply", 0, advice, advice.id)
         print("Heartbeat: {}".format(time()))
         return rant
 
-    def listen(self):
+    def _listen(self):
         # TODO Add zmq.auth authentication to connection
         # TODO Run advice requests in separate threads so the heartbeat
         #      can still be maintained during long running requests
         # TODO SOCKETS ARE NOT THREAD SAFE !!! But Contexts ARE
-        self.socket.bind("{}://0.0.0.0:{}".format(self.protocol, self.bind_port))
+        socket = self._get_socket()
+        socket.bind("{}://0.0.0.0:{}".format(self.protocol, self.advice_port))
         while True:
-            advice = self._json_to_pyobj(self.socket.recv_unicode())
+            advice = self._json_to_pyobj(socket.recv_unicode())
             self.advice_queue.put(advice)
-            self.log.debug("Received object: {}".format(advice))
-            if advice.type == "shell":
-                rant = self._handle_shell(advice)
-            elif advice.type == "heartbeat":
-                rant = self._handle_heartbeat(advice)
-            else:
-                rant = Rant("unknown advice", 1, advice)
-            self.socket.send_unicode(simplejson.dumps(rant._asdict()))
+            socket.send_unicode("Recieved advice {}".format(advice.id))
+
+    def _run_advice(self):
+        advice = self.advice_queue.get()
+        self.log.debug("Received object: {}".format(advice))
+        if advice.type == "shell":
+            rant = self._handle_shell(advice)
+        elif advice.type == "heartbeat":
+            rant = self._handle_heartbeat(advice)
+        else:
+            rant = Rant("unknown advice", 1, advice)
+        self.rant_queue.put(rant)
+
+    def replyer(self, socket):
+        socket.bind("{}://0.0.0.0:{}".format(self.protocol, self.rant_port))
+        while True:
+            rant = self.rant_queue.get()
+            socket.send_unicode(simplejson.dumps(rant._asdict()))
+            socket.recv_unicode()
 
 
 def main():
@@ -251,7 +286,7 @@ def main():
                         help="Port number for daemon to bind to")
     args = parser.parse_args()
 
-    port = args.port if args.port else DAEMON_DEFAULT_PORT
+    port = args.port if args.port else ADVICE_DEFAULT_PORT
 
     daemon = ClientDaemon(bind_port=port)
     daemon.listen()
