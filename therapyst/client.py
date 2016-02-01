@@ -16,9 +16,11 @@ import zmq
 import paramiko
 import simplejson
 
-from therapyst.data import Advice, Rant, AdviceQueue, RantQueue, HEARTBEAT
+from therapyst.data import adviceFactory, rantFactory, AdviceQueue, RantQueue
 
 LOG = logging.getLogger(__name__)
+logging.getLogger("paramiko").setLevel(logging.WARNING)
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 RANT_DEFAULT_PORT = 5556
 ADVICE_DEFAULT_PORT = 5557
@@ -64,69 +66,88 @@ class Client():
         self.heartbeat = None
         self.heartbeat_interval = 5
         self.heartbeater = None
-        self.results_listener = None
+        self.rant_listener = None
         self.rants = {}
 
-    def _get_socket(self):
-        return self.context.socket(zmq.REQ)
+    def _get_socket(self, socket_type):
+        return self.context.socket(socket_type)
+
+    def _str_to_pyobj(self, string):
+        json = simplejson.loads(string)
+        return rantFactory(json["result"],
+                           json["error_code"],
+                           adviceFactory(json["advice"]["cmd"],
+                                         json["advice"]["error_expected"],
+                                         json["advice"]["type"],
+                                         json["advice"]["id"]))
 
     def start(self):
+        LOG.debug("Starting Client Threads")
         self.heartbeater = threading.Thread(
             name="heartbeater", target=self.run_heartbeat)
         self.heartbeater.start()
-        self.results_listener = threading.Thread(
-            name="results_listener", target=self.results_listener_func)
-        self.results_listener.start()
+        LOG.debug("Heartbeater started")
+        self.rant_listener = threading.Thread(
+            name="rant_listener", target=self.rant_listener_func)
+        self.rant_listener.start()
+        LOG.debug("rant_listener started")
 
     def send_advice(self, advice):
-        socket = self._get_socket()
+        socket = self._get_socket(zmq.REQ)
         socket.connect("{}://{}:{}".format(self.protocol,
                                            self.ip,
                                            self.advice_port))
         socket.send_unicode(simplejson.dumps(advice._asdict()))
-        LOG.debug("Sending Advice: {}".format(advice))
+        LOG.debug("Sending adviceFactory: {}".format(advice))
         resp = socket.recv_unicode()
-        LOG.debug("Recived Response: ()".format(resp))
+        LOG.debug("Recived Response: {}".format(resp))
         if advice.id in resp:
             return True
         else:
             return False
 
+    # TODO: This method is broken somehow. The daemon is sending the rant,
+    # but this guy isn't populating self.rants.  Likely some exception is killing
+    # the thread.
+    def rant_listener_func(self):
+        socket = self._get_socket(zmq.REP)
+        socket.connect("{}://{}:{}".format(self.protocol,
+                                           self.ip,
+                                           self.rant_port))
+        while not self.stop:
+            rant = self._str_to_pyobj(socket.recv_unicode())
+            LOG.debug("Recieved rant: {}".format(rant.id))
+            self.rants[rant.id] = rant
+            socket.send_unicode("Recieved rant: {}".format(rant.id))
+
     def get_rant(self, advice, block=True, poll_interval=1):
         if block:
-            while True:
+            while not self.stop:
                 try:
                     return self.rants[advice.id]
                 except KeyError:
+                    LOG.debug("rantFactory id {} not found, sleeping {}".format(
+                        advice.id, poll_interval))
                     sleep(poll_interval)
         else:
             return self.rants.get(advice.id, None)
 
-    def results_listener_func(self):
-        socket = self._get_socket()
-        socket.connect("{}://{}:{}".format(self.protocol,
-                                           self.ip,
-                                           self.advice_port))
-        while not self.stop:
-            rant = socket.recv_unicode()
-            self.rants[rant.id] = rant
-            socket.send_unicode("Recieved results: {}".format(rant.id))
-
     def run_heartbeat(self):
-        socket = self._get_socket()
+        socket = self._get_socket(zmq.REQ)
         while not self.stop:
-            print(self.heartbeat)
             sleep(self.heartbeat_interval)
             socket.connect("{}://{}:{}".format(self.protocol,
                                                self.ip,
                                                self.advice_port))
-            socket.send_unicode(simplejson.dumps(HEARTBEAT))
+            heartbeat = adviceFactory("", "", "heartbeat")
+            socket.send_unicode(simplejson.dumps(heartbeat))
             resp = simplejson.loads(socket.recv_unicode())
-            rant = Rant(resp['result'], resp['error_code'], resp['advice'])
+            rant = rantFactory(resp['result'], resp['error_code'], resp['advice'])
             if rant.result != "heartbeat_reply":
                 self.heartbeat = False
             else:
                 self.heartbeat = True
+            # LOG.debug("HEARTBEAT status: {}".format(self.heartbeat))
 
     @classmethod
     def from_dict(self, d, name=None):
@@ -252,11 +273,14 @@ class ClientDaemon():
         self.stop = False
 
     def start(self):
+        LOG.debug("Starting Listener")
         self.listener = threading.Thread(name="listener", target=self._listen)
         self.listener.start()
+        LOG.debug("Starting Replyer")
         self.replyer = threading.Thread(name="replyer", target=self._reply)
         self.replyer.start()
-        for thread_num in xrange(self.max_threads):
+        LOG.debug("Starting {} Worker Threads".format(self.max_threads))
+        for thread_num in range(self.max_threads):
             thread = \
                 threading.Thread(name="worker-{}".format(thread_num),
                                  target=self._worker_function)
@@ -264,19 +288,20 @@ class ClientDaemon():
             self.workers.append(thread)
 
     def stop_workers(self):
+        LOG.debug("Joining Worker Threads")
         self.stop = True
         for thread in self.workers:
             thread.join()
 
-    def _get_socket(self):
-        return self.context.socket(zmq.REP)
+    def _get_socket(self, socket_type):
+        return self.context.socket(socket_type)
 
-    def _json_to_pyobj(self, string):
+    def _str_to_pyobj(self, string):
         json = simplejson.loads(string)
-        return Advice(json["cmd"],
-                      json["error_expected"],
-                      json["type"],
-                      json["id"])
+        return adviceFactory(json["cmd"],
+                             json["error_expected"],
+                             json["type"],
+                             json["id"])
 
     @staticmethod
     def _handle_shell(advice):
@@ -286,45 +311,45 @@ class ClientDaemon():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT)
         result = proc.communicate()[0]
-        rant = Rant(result, proc.returncode, advice, advice.id)
+        rant = rantFactory(result, proc.returncode, advice)
         print("Result: {}".format(result))
         return rant
 
     @staticmethod
     def _handle_heartbeat(advice):
-        rant = Rant("heartbeat_reply", 0, advice, advice.id)
-        print("Heartbeat: {}".format(time()))
+        rant = rantFactory("heartbeat_reply", 0, advice)
+        LOG.debug("Heartbeat: {}".format(time()))
         return rant
 
     def _listen(self):
         # TODO Add zmq.auth authentication to connection
-        # TODO Run advice requests in separate threads so the heartbeat
-        #      can still be maintained during long running requests
-        # TODO SOCKETS ARE NOT THREAD SAFE !!! But Contexts ARE
-        socket = self._get_socket()
+        socket = self._get_socket(zmq.REP)
         socket.bind("{}://0.0.0.0:{}".format(self.protocol, self.advice_port))
         while not self.stop:
-            advice = self._json_to_pyobj(socket.recv_unicode())
-            self.advice_queue.put(advice)
-            socket.send_unicode("Recieved advice {}".format(advice.id))
+            advice = self._str_to_pyobj(socket.recv_unicode())
+            if advice.type == "heartbeat":
+                rant = self._handle_heartbeat(advice)
+                socket.send_unicode(simplejson.dumps(rant._asdict()))
+            else:
+                self.advice_queue.put(advice)
+                socket.send_unicode("Recieved advice {}".format(advice.id))
 
     def _reply(self):
-        socket = self._get_socket()
+        socket = self._get_socket(zmq.REQ)
         socket.bind("{}://0.0.0.0:{}".format(self.protocol, self.rant_port))
         while not self.stop:
             rant = self.rant_queue.get()
+            LOG.debug("Sending rantFactory: {}".format(rant.id))
             socket.send_unicode(simplejson.dumps(rant._asdict()))
-            socket.recv_unicode()
+            LOG.debug(socket.recv_unicode())
 
     def _worker_function(self):
         advice = self.advice_queue.get()
         self.log.debug("Received object: {}".format(advice))
         if advice.type == "shell":
             rant = self._handle_shell(advice)
-        elif advice.type == "heartbeat":
-            rant = self._handle_heartbeat(advice)
         else:
-            rant = Rant("unknown advice", 1, advice)
+            rant = rantFactory("unknown advice", 1, advice)
         self.rant_queue.put(rant)
 
 

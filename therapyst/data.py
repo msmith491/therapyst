@@ -5,12 +5,22 @@ from queue import Queue
 from uuid import uuid4
 
 Advice = namedtuple("Advice", "cmd error_expected type id")
-Advice.__new__.__defaults__ = ("", False, "shell", str(uuid4()))
-
-HEARTBEAT = Advice(None, None, "heartbeat")
-
 Rant = namedtuple("Rant", "result error_code advice id")
-Rant.__new__.__defaults__ = ("", None, "", str(uuid4()))
+
+
+# Dynamically generate UUID for each Advice Instance
+# Rants get their id from their paired Adivce instance
+def adviceFactory(cmd="", error_expected=False, type="shell", id=None):
+    if id:
+        advice = Advice(cmd, error_expected, type, id)
+    else:
+        advice = Advice(cmd, error_expected, type, str(uuid4()))
+    return advice
+
+
+def rantFactory(result="", error_code="", advice=""):
+    rant = Rant(result, error_code, advice, advice.id)
+    return rant
 
 
 class AdviceQueue(Queue):
