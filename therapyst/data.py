@@ -5,12 +5,12 @@ from queue import Queue
 from uuid import uuid4
 
 Advice = namedtuple("Advice", "cmd error_expected type id")
-Advice.__new__.__defaults__ = ("", False, "shell", uuid4())
+Advice.__new__.__defaults__ = ("", False, "shell", str(uuid4()))
 
 HEARTBEAT = Advice(None, None, "heartbeat")
 
 Rant = namedtuple("Rant", "result error_code advice id")
-Rant.__new__.__defaults__ = ("", None, "", uuid4())
+Rant.__new__.__defaults__ = ("", None, "", str(uuid4()))
 
 
 class AdviceQueue(Queue):
