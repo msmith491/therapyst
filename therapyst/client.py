@@ -20,7 +20,7 @@ from therapyst.data import adviceFactory, rantFactory, AdviceQueue, RantQueue
 
 LOG = logging.getLogger(__name__)
 logging.getLogger("paramiko").setLevel(logging.WARNING)
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 RANT_DEFAULT_PORT = 5556
 ADVICE_DEFAULT_PORT = 5557
@@ -141,8 +141,8 @@ class Client():
                                                self.advice_port))
             heartbeat = adviceFactory("", "", "heartbeat")
             socket.send_unicode(simplejson.dumps(heartbeat))
-            resp = simplejson.loads(socket.recv_unicode())
-            rant = rantFactory(resp['result'], resp['error_code'], resp['advice'])
+            resp = socket.recv_unicode()
+            rant = self._str_to_pyobj(resp)
             if rant.result != "heartbeat_reply":
                 self.heartbeat = False
             else:
@@ -344,13 +344,15 @@ class ClientDaemon():
             LOG.debug(socket.recv_unicode())
 
     def _worker_function(self):
-        advice = self.advice_queue.get()
-        self.log.debug("Received object: {}".format(advice))
-        if advice.type == "shell":
-            rant = self._handle_shell(advice)
-        else:
-            rant = rantFactory("unknown advice", 1, advice)
-        self.rant_queue.put(rant)
+        while not self.stop:
+            advice = self.advice_queue.get()
+            self.log.debug("Received object: {}".format(advice))
+            if advice.type == "shell":
+                rant = self._handle_shell(advice)
+            else:
+                rant = rantFactory("unknown advice", 1, advice)
+            self.rant_queue.put(rant)
+            self.advice_queue.task_done()
 
 
 def main():
