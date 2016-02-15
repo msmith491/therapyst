@@ -86,10 +86,12 @@ class Client():
         LOG.debug("Starting Client Threads")
         self.heartbeater = threading.Thread(
             name="heartbeater", target=self.run_heartbeat)
+        self.heartbeater.daemon = True
         self.heartbeater.start()
         LOG.debug("Heartbeater started")
         self.rant_listener = threading.Thread(
             name="rant_listener", target=self.rant_listener_func)
+        self.rant_listener.daemon = True
         self.rant_listener.start()
         LOG.debug("rant_listener started")
         self.ready = True
@@ -134,7 +136,7 @@ class Client():
             self.rants[rant.id] = rant
             socket.send_unicode("Recieved rant: {}".format(rant.id))
 
-    def get_rant(self, advice, block=True, poll_interval=0.1):
+    def get_rant(self, advice, block=True, poll_interval=None):
         if block:
             while not self.stop:
                 try:
@@ -142,7 +144,8 @@ class Client():
                 except KeyError:
                     LOG.debug("rantFactory id {} not found, sleeping {}".format(
                         advice.id, poll_interval))
-                    sleep(poll_interval)
+                    if poll_interval:
+                        sleep(poll_interval)
         else:
             return self.rants.pop(advice.id, None)
 

@@ -7,6 +7,7 @@ import threading
 from uuid import uuid4
 
 from therapyst.client import Client
+from therapyst.data import AdviceQueue
 
 LOG = logging.getLogger(__name__)
 logging.getLogger("paramiko").setLevel(logging.WARNING)
@@ -54,7 +55,12 @@ class TherapyGroup():
         self.name = name if name else uuid4()
         self.members = members
         self._member_set = None
+        self._advice_queues = {member: AdviceQueue()
+                               for member in self.members}
+        self._rant_dicts = {member: {}
+                            for member in self.members}
         self.member_threads = []
+        self.stop = False
 
     def add_member(self, new_member):
         self.members.append(new_member)
@@ -71,6 +77,10 @@ class TherapyGroup():
             self._member_set = set(self.members)
         return self._member_set
 
+    @property
+    def heartbeats(self):
+        return [member.heartbeat for member in self.members]
+
     def __contains__(self, key):
         return key in self.member_set
 
@@ -80,13 +90,22 @@ class TherapyGroup():
                                       args=(member, ))
             self.member_threads.append(thread)
 
+    def _restart_members(self):
+        # TODO implement this (or something like it) to monitor heartbeat
+        # status from members and restart them as needed
+        pass
+
     def _member_func(self, member):
         # TODO: Need to figure out how best to managed the advice queues
         # for each client.  Do I have the therapy group populate the
         # Client advice queues directly, or do I have it pass the advice
         # in the client.send_advice function and just have the TherapyGroup
         # threads calling that?
-        pass
+        advice_queue = self._advice_queues[member]
+        rant_dict = self._rant_dicts[member]
+        while not self.stop:
+            advice = advice_queue.get()
+            rant_dict[advice.id] = member.send_and_receive(advice)
 
     @classmethod
     def from_dict(cls, data_struct, name=None):
@@ -101,12 +120,16 @@ class TherapyGroup():
             }
         """
         clients = [Client(c['ip'], c['username'], c['password'], name=n)
-                   for n, c in data_struct.viewitems()]
+                   for n, c in data_struct.items()]
         return cls(clients, name=name)
 
     def give_advice(self, advice):
-        for client in self.members:
-            client.send_advice(advice)
+        """
+        Main entry point for interacting with therapyst
+        """
+        for member in self.members:
+            self._advice_queues[member].put(advice)
 
-    def hear_rant(self):
-        pass
+    def hear_rant(self, advice):
+        return {member.name: self._rant_dicts[advice.id]
+                for member in self.members}
