@@ -63,6 +63,7 @@ class Client():
         self.python_version = None
         self._ssh = None
         self.stop = False
+        self.ready = False
         self.heartbeat = None
         self.heartbeat_interval = 5
         self.heartbeater = None
@@ -91,8 +92,15 @@ class Client():
             name="rant_listener", target=self.rant_listener_func)
         self.rant_listener.start()
         LOG.debug("rant_listener started")
+        self.ready = True
+        return self.ready
 
     def send_advice(self, advice):
+        """
+        Used for Async sending
+        """
+        if not self.ready:
+            self.start()
         socket = self._get_socket(zmq.REQ)
         socket.connect("{}://{}:{}".format(self.protocol,
                                            self.ip,
@@ -105,6 +113,12 @@ class Client():
             return True
         else:
             return False
+
+    def send_and_receive(self, advice):
+        if not self.send_advice(advice):
+            raise IOError("Error occurred during communication with client")
+        else:
+            return self.get_rant(advice)
 
     # TODO: This method is broken somehow. The daemon is sending the rant,
     # but this guy isn't populating self.rants.  Likely some exception is killing
@@ -120,17 +134,17 @@ class Client():
             self.rants[rant.id] = rant
             socket.send_unicode("Recieved rant: {}".format(rant.id))
 
-    def get_rant(self, advice, block=True, poll_interval=1):
+    def get_rant(self, advice, block=True, poll_interval=0.1):
         if block:
             while not self.stop:
                 try:
-                    return self.rants[advice.id]
+                    return self.rants.pop(advice.id)
                 except KeyError:
                     LOG.debug("rantFactory id {} not found, sleeping {}".format(
                         advice.id, poll_interval))
                     sleep(poll_interval)
         else:
-            return self.rants.get(advice.id, None)
+            return self.rants.pop(advice.id, None)
 
     def run_heartbeat(self):
         socket = self._get_socket(zmq.REQ)
@@ -245,6 +259,7 @@ class Client():
             raise ValueError("Unsupported Host")
         self._exec_command(" ".join((
             REMOTE_VENV_PYTHON, REMOTE_EXECUTE, "> client.log 2>&1 &")))
+        self._exec_command("ps -ef | grep therapyst | grep -v grep")
 
     def __str__(self):
         return "<Client obj:{},{}>".format(self.name, self.ip)
