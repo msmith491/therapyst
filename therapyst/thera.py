@@ -3,6 +3,7 @@
 import sys
 import logging
 import threading
+import time
 
 from uuid import uuid4
 
@@ -51,7 +52,7 @@ class Therapyst():
 
 class TherapyGroup():
 
-    def __init__(self, members, name=None):
+    def __init__(self, members, name=None, member_timeout=30):
         self.name = name if name else uuid4()
         self.members = members
         self._member_set = None
@@ -61,6 +62,7 @@ class TherapyGroup():
                             for member in self.members}
         self.member_threads = []
         self.stop = False
+        self._member_timeout = member_timeout
 
     def add_member(self, new_member):
         self.members.append(new_member)
@@ -90,10 +92,16 @@ class TherapyGroup():
                                       args=(member, ))
             self.member_threads.append(thread)
 
-    def _restart_members(self):
-        # TODO implement this (or something like it) to monitor heartbeat
-        # status from members and restart them as needed
-        pass
+    def _member_watch(self):
+        member_checkups = {member: time.time() for member in self.members}
+        while not self.stop:
+            for member, heartbeat in self.heartbeats:
+                if (not heartbeat and
+                        member_checkups[member] >= self._member_timeout):
+                    # TODO needs to be agnostic
+                    member.start_daemon_linux()
+                elif heartbeat:
+                    member_checkups[member] = time.time()
 
     def _member_func(self, member):
         # TODO: Need to figure out how best to managed the advice queues

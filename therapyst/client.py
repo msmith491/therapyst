@@ -236,6 +236,9 @@ class Client():
         finally:
             sftp.close()
 
+    def _install_other(self):
+        raise NotImplementedError("Unsupported Host")
+
     @staticmethod
     def put_dir(sftp, localpath, remotepath):
         os.chdir(os.path.split(localpath)[0])
@@ -254,18 +257,29 @@ class Client():
                     remotepath, walker[0], file))
 
     def install_and_start_daemon(self):
-        stdout = self._exec_command("uname -a")
-        if "linux" in stdout.lower():
+        try:
+            cmd = "python3 -c 'import os; print(os.uname().sysname)'"
+            result = self._exec_command(cmd).lower()
+        except EnvironmentError:
+            cmd = "python -c 'import os; print(os.uname()[0])'"
+            result = self._exec_command(cmd).lower()
+        if "linux" in result:
             self._install_linux()
             self._setup_venv()
+            self.start_daemon_linux()
         else:
-            raise ValueError("Unsupported Host")
+            self._install_other()
+            self._setup_venv()
+            self.start_daemon_other()
+
+    def start_daemon_linux(self):
         self._exec_command(" ".join((
             REMOTE_VENV_PYTHON, REMOTE_EXECUTE, "> client.log 2>&1 &")))
         self._exec_command("ps -ef | grep therapyst | grep -v grep")
 
-    def __str__(self):
-        return "<Client obj:{},{}>".format(self.name, self.ip)
+    def start_daemon_other(self):
+        # TODO Implement non-linux OS compatibility
+        raise NotImplementedError("Unsupported Host")
 
 
 class ClientDaemon():
