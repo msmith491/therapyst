@@ -36,6 +36,9 @@ LOCAL_FOLDER = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 REQUIREMENTS = open("/".join((
     LOCAL_FOLDER, "requirements.txt"))).read().strip().replace("\n", " ")
 
+OS_LINUX = 'linux'
+OS_OTHER = 'other'
+
 
 class Client():
 
@@ -60,6 +63,7 @@ class Client():
         self.rant_port = rant_port
         self.protocol = protocol
         self.context = zmq.Context()
+        self.os = None
         self.python_version = None
         self._ssh = None
         self.stop = False
@@ -263,21 +267,29 @@ class Client():
         except EnvironmentError:
             cmd = "python -c 'import os; print(os.uname()[0])'"
             result = self._exec_command(cmd).lower()
-        if "linux" in result:
+        if OS_LINUX in result:
+            self.os = OS_LINUX
             self._install_linux()
             self._setup_venv()
-            self.start_daemon_linux()
+            self._start_daemon_linux()
         else:
+            self.os = 'other'
             self._install_other()
             self._setup_venv()
-            self.start_daemon_other()
+            self._start_daemon_other()
 
-    def start_daemon_linux(self):
+    def start_daemon(self):
+        if self.os == OS_LINUX:
+            self._start_daemon_linux()
+        else:
+            self._start_daemon_other()
+
+    def _start_daemon_linux(self):
         self._exec_command(" ".join((
             REMOTE_VENV_PYTHON, REMOTE_EXECUTE, "> client.log 2>&1 &")))
         self._exec_command("ps -ef | grep therapyst | grep -v grep")
 
-    def start_daemon_other(self):
+    def _start_daemon_other(self):
         # TODO Implement non-linux OS compatibility
         raise NotImplementedError("Unsupported Host")
 

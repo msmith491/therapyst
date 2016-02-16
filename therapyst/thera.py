@@ -98,8 +98,7 @@ class TherapyGroup():
             for member, heartbeat in self.heartbeats:
                 if (not heartbeat and
                         member_checkups[member] >= self._member_timeout):
-                    # TODO needs to be agnostic
-                    member.start_daemon_linux()
+                    member.start_daemon()
                 elif heartbeat:
                     member_checkups[member] = time.time()
 
