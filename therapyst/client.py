@@ -214,29 +214,31 @@ class Client():
             sftp.close()
 
     def _setup_venv(self):
-        try:
-            self._exec_command("python3 --version")
-            self.python_version = "3"
-        except EnvironmentError:
+        if not self._dir_exists(REMOTE_VENV):
             try:
-                self._exec_command("python2.7 --version")
-                self.python_version = "2"
+                self._exec_command("python3 --version")
+                self.python_version = "3"
             except EnvironmentError:
-                raise EnvironmentError("Need at least python2.7+")
+                try:
+                    self._exec_command("python2.7 --version")
+                    self.python_version = "2"
+                except EnvironmentError:
+                    raise EnvironmentError("Need at least python2.7+")
 
-        try:
-            self._exec_command("virtualenv {} --python=python{}".format(
-                REMOTE_VENV, self.python_version))
-        except EnvironmentError:
-            raise EnvironmentError("virtualenv package in required")
+            try:
+                self._exec_command("virtualenv {} --python=python{}".format(
+                    REMOTE_VENV, self.python_version))
+            except EnvironmentError:
+                raise EnvironmentError("virtualenv package in required")
 
-        self._exec_command("{} install {}".format(REMOTE_VENV_PIP, REQUIREMENTS))
-        self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP, REMOTE_DIR))
+            self._exec_command("{} install {}".format(REMOTE_VENV_PIP, REQUIREMENTS))
+            self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP, REMOTE_DIR))
 
     def _install_linux(self):
         sftp = self._setup_ssh().open_sftp()
         try:
-            self.put_dir(sftp, LOCAL_FOLDER, "")
+            if not self._dir_exists(REMOTE_DIR):
+                self.put_dir(sftp, LOCAL_FOLDER, "")
         finally:
             sftp.close()
 
@@ -279,7 +281,9 @@ class Client():
             self._start_daemon_other()
 
     def start_daemon(self):
-        if self.os == OS_LINUX:
+        if not self.os:
+            pass
+        elif self.os == OS_LINUX:
             self._start_daemon_linux()
         else:
             self._start_daemon_other()
@@ -287,7 +291,12 @@ class Client():
     def _start_daemon_linux(self):
         self._exec_command(" ".join((
             REMOTE_VENV_PYTHON, REMOTE_EXECUTE, "> client.log 2>&1 &")))
-        self._exec_command("ps -ef | grep therapyst | grep -v grep")
+        try:
+            self._exec_command("ps -ef | grep therapyst | grep -v grep")
+        except EnvironmentError:
+            raise EnvironmentError(
+                "Could not start ClientDaemon process on Client {}".format(
+                    self.name))
 
     def _start_daemon_other(self):
         # TODO Implement non-linux OS compatibility

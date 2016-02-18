@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import sys
+import os
+import re
 
 try:
     from setuptools import setup
@@ -10,6 +12,9 @@ except ImportError:
 PYTHON2_VERSION = (2, 7)
 PYTHON3_VERSION = (3, 0)
 PYTHON3_MIN = (3, 2)
+
+LOCAL_FOLDER = os.path.dirname(os.path.abspath(__file__))
+REQUIREMENTS_LOC = "/".join((LOCAL_FOLDER, "requirements.txt"))
 
 python2 = False
 if PYTHON2_VERSION <= sys.version_info <= PYTHON3_VERSION:
@@ -21,6 +26,12 @@ if not python2 and (sys.version_info < PYTHON3_MIN or
 
 # TODO Do something about installing for Python 2.7
 
+
+def find_requires(requirements_loc):
+    with open(requirements_loc) as f:
+        reqs = f.read()
+        return re.findall('^([^#><=\s]+)', reqs, flags=re.M)
+
 setup(
     name='therapyst',
     version='0.1',
@@ -31,10 +42,9 @@ setup(
     packages=['therapyst'],
     package_dir={'therapyst': 'therapyst'},
     include_package_data=True,
-    install_requires=['pyzmq', 'simplejson'],
+    install_requires=find_requires(REQUIREMENTS_LOC),
     license='MIT License',
     zip_safe=True,
-    use_3to2=True,
     classifiers=(
         'Development Status :: 1 - Planning',
         'Intended Audience :: Developers',

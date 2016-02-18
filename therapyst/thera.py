@@ -46,13 +46,11 @@ class Therapyst():
         """
         self.data_struct = data_struct
 
-    def test_ips(self):
-        pass
-
 
 class TherapyGroup():
 
-    def __init__(self, members, name=None, member_timeout=30):
+    def __init__(self, members, name=None, member_timeout=30,
+                 raise_on_timeout=False):
         self.name = name if name else uuid4()
         self.members = members
         self._member_set = None
@@ -61,8 +59,10 @@ class TherapyGroup():
         self._rant_dicts = {member: {}
                             for member in self.members}
         self.member_threads = []
+        self.member_watch_thread = None
         self.stop = False
         self._member_timeout = member_timeout
+        self._raise_on_timeout = raise_on_timeout
 
     def add_member(self, new_member):
         self.members.append(new_member)
@@ -81,38 +81,57 @@ class TherapyGroup():
 
     @property
     def heartbeats(self):
-        return [member.heartbeat for member in self.members]
+        return [(member, member.heartbeat) for member in self.members]
 
     def __contains__(self, key):
         return key in self.member_set
 
+    def _setup_member_watch(self):
+        thread = threading.Thread(target=self._member_watch,
+                                  name="member_watch")
+        thread.daemon = True
+        thread.start()
+        self.member_watch_thread = thread
+
     def _setup_member_threads(self):
         for member in self.members:
             thread = threading.Thread(target=self._member_func,
-                                      args=(member, ))
+                                      args=(member, ),
+                                      name=member.name)
+            thread.daemon = True
+            thread.start()
             self.member_threads.append(thread)
 
     def _member_watch(self):
-        member_checkups = {member: time.time() for member in self.members}
+        """
+        Auto restart client daemon processes on remote machines based
+        on heartbeats
+        """
+        member_watch = {member: time.time() for member in self.members}
         while not self.stop:
             for member, heartbeat in self.heartbeats:
                 if (not heartbeat and
-                        member_checkups[member] >= self._member_timeout):
-                    member.start_daemon()
+                        member_watch[member] >= self._member_timeout):
+                    if self._raise_on_timeout:
+                        raise EnvironmentError(
+                            "Member: {} of TherapyGroup: {} timed out after {} "
+                            "seconds of not responding to heartbeat "
+                            "requests".format(
+                                member,
+                                self.name,
+                                time.time() - member_watch[member]))
+                    else:
+                        member.start_daemon()
                 elif heartbeat:
-                    member_checkups[member] = time.time()
+                    member_watch[member] = time.time()
 
     def _member_func(self, member):
-        # TODO: Need to figure out how best to managed the advice queues
-        # for each client.  Do I have the therapy group populate the
-        # Client advice queues directly, or do I have it pass the advice
-        # in the client.send_advice function and just have the TherapyGroup
-        # threads calling that?
         advice_queue = self._advice_queues[member]
         rant_dict = self._rant_dicts[member]
         while not self.stop:
             advice = advice_queue.get()
-            rant_dict[advice.id] = member.send_and_receive(advice)
+            result = member.send_and_receive(advice)
+            rant_dict[advice.id] = result
 
     @classmethod
     def from_dict(cls, data_struct, name=None):
@@ -130,13 +149,25 @@ class TherapyGroup():
                    for n, c in data_struct.items()]
         return cls(clients, name=name)
 
+    def start(self):
+        self._setup_member_threads()
+        self._setup_member_watch()
+
     def give_advice(self, advice):
         """
         Main entry point for interacting with therapyst
         """
+        if not any(self.member_threads):
+            self._setup_member_threads()
+        if not self.member_watch_thread:
+            self._setup_member_watch()
         for member in self.members:
             self._advice_queues[member].put(advice)
 
     def hear_rant(self, advice):
-        return {member.name: self._rant_dicts[advice.id]
-                for member in self.members}
+        while True:
+            try:
+                return {member.name: self._rant_dicts[member][advice.id]
+                        for member in self.members}
+            except KeyError:
+                pass
