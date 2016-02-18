@@ -1,3 +1,4 @@
 pyzmq
 simplejson
 paramiko
+pytest
