@@ -6,6 +6,8 @@ import os
 import subprocess
 import shlex
 import logging
+import socket as sckt
+
 
 from uuid import uuid4
 from time import sleep, time
@@ -13,8 +15,10 @@ import errno
 import threading
 
 import zmq
+import zmq.auth
 import paramiko
 import simplejson
+from zmq.auth.thread import ThreadAuthenticator
 
 from therapyst.data import adviceFactory, rantFactory, AdviceQueue, RantQueue
 
@@ -36,6 +40,8 @@ LOCAL_FOLDER = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 REQUIREMENTS = open("/".join((
     LOCAL_FOLDER, "requirements.txt"))).read().strip().replace("\n", " ")
 
+CERTS_DIR = os.path.join(LOCAL_FOLDER, 'certs')
+
 OS_LINUX = 'linux'
 OS_OTHER = 'other'
 
@@ -54,7 +60,8 @@ class Client():
             name=None,
             rant_port=RANT_DEFAULT_PORT,
             advice_port=ADVICE_DEFAULT_PORT,
-            protocol="tcp"):
+            protocol="tcp",
+            auth=True):
         self.ip = ip
         self.username = username
         self.password = password
@@ -62,9 +69,12 @@ class Client():
         self.advice_port = advice_port
         self.rant_port = rant_port
         self.protocol = protocol
+        self.auth = auth
+        self.auth_thread = None
         self.context = zmq.Context()
         self.os = None
         self.python_version = None
+        self._transport = None
         self._ssh = None
         self.stop = False
         self.ready = False
@@ -98,6 +108,8 @@ class Client():
         self.rant_listener.daemon = True
         self.rant_listener.start()
         LOG.debug("rant_listener started")
+        self._setup_auth_thread()
+        LOG.debug("auth_thread started")
         self.ready = True
         return self.ready
 
@@ -178,30 +190,49 @@ class Client():
     def _gen_name():
         return str(uuid4())
 
-    def _setup_ssh(self):
-        if not self._ssh:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(
-                self.ip,
-                username=self.username,
-                password=self.password)
-            self._ssh = ssh
-        return self._ssh
+    def _setup_transport(self):
+        try:
+            ip = self.ip + ":22"
+            transport = paramiko.Transport(ip)
+            transport.set_keepalive(10)
+            transport.connect(username=self.username,
+                              password=self.password)
+            return transport
+        except sckt.error:
+            LOG.error("Could not connect: hostname: {} username: {}, port {"
+                      "}".format(self.username, self.password, self.ip))
+            raise
+        except paramiko.BadAuthenticationType:
+            LOG.error("Bad Authentication: username: {}, password: "
+                      "******".format(self.username))
+            raise
 
     def _exec_command(self, command, error_expected=False):
-        LOG.debug("Running command: {}".format(command))
-        ssh = self._setup_ssh()
-        _, stdout, stderr = ssh.exec_command(command)
-        status = stdout.channel.recv_exit_status()
-        if not error_expected and status != 0:
-            print(stdout.read().decode(), stderr.read().decode())
-            raise EnvironmentError("Exit Status for command {"
-                                   "} was nonzero: {}".format(command, status))
-        return stdout.read().decode()
+
+        tp = self._setup_transport()
+        try:
+            session = tp.open_session()
+            session.set_combine_stderr(True)
+            session.exec_command(command)
+            output = ""
+            while True:
+                data = session.recv(4096)
+                if not data:
+                    break
+                output += str(data, "utf-8", "replace")
+            status = session.recv_exit_status()
+            if not error_expected and status != 0:
+                raise paramiko.SSHException("Non-zero exit status {} from "
+                                            "command `{}`".format(status,
+                                                                  command))
+            session.close()
+            return output
+        finally:
+            tp.close()
 
     def _dir_exists(self, path):
-        sftp = self._setup_ssh().open_sftp()
+        transport = self._setup_transport()
+        sftp = paramiko.SFTPClient.from_transport(transport)
         try:
             sftp.stat(path)
         except IOError as e:
@@ -235,7 +266,8 @@ class Client():
             self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP, REMOTE_DIR))
 
     def _install_linux(self):
-        sftp = self._setup_ssh().open_sftp()
+        transport = self._setup_transport()
+        sftp = paramiko.SFTPClient.from_transport(transport)
         try:
             if not self._dir_exists(REMOTE_DIR):
                 self.put_dir(sftp, LOCAL_FOLDER, "")
@@ -302,6 +334,12 @@ class Client():
         # TODO Implement non-linux OS compatibility
         raise NotImplementedError("Unsupported Host")
 
+    def _setup_auth_thread(self):
+        self.auth_thread = ThreadAuthenticator(self.context)
+        self.auth_thread.start()
+        self.auth_thread.allow('172.0.0.1')
+        self.auth_thread.configure_curve(domain="*", location=CERTS_DIR)
+
 
 class ClientDaemon():
 
@@ -324,6 +362,7 @@ class ClientDaemon():
         self.replyer = None
         self.workers = []
         self.stop = False
+        self.auth_thread = None
 
     def start(self):
         LOG.debug("Starting Listener")
@@ -339,6 +378,7 @@ class ClientDaemon():
                                  target=self._worker_function)
             thread.start()
             self.workers.append(thread)
+        self._setup_auth_thread()
 
     def stop_workers(self):
         LOG.debug("Joining Worker Threads")
@@ -406,6 +446,12 @@ class ClientDaemon():
                 rant = rantFactory("unknown advice", 1, advice)
             self.rant_queue.put(rant)
             self.advice_queue.task_done()
+
+    def _setup_auth_thread(self):
+        self.auth_thread = ThreadAuthenticator(self.context)
+        self.auth_thread.start()
+        self.auth_thread.allow('172.0.0.1')
+        self.auth_thread.configure_curve(domain="*", location=CERTS_DIR)
 
 
 def main():

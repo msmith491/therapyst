@@ -157,10 +157,10 @@ class TherapyGroup():
         """
         Main entry point for interacting with therapyst
         """
-        if not any(self.member_threads):
-            self._setup_member_threads()
-        if not self.member_watch_thread:
-            self._setup_member_watch()
+        # if not any(self.member_threads):
+        #     self._setup_member_threads()
+        # if not self.member_watch_thread:
+        #     self._setup_member_watch()
         for member in self.members:
             self._advice_queues[member].put(advice)
 
