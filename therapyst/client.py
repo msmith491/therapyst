@@ -31,14 +31,14 @@ ADVICE_DEFAULT_PORT = 5557
 REMOTE_DIR = "therapyst"
 REMOTE_BINARY = "/".join(("therapyst", os.path.basename(__file__)))
 REMOTE_VENV = "therapyst_venv"
-REMOTE_VENV_PYTHON = "/".join((REMOTE_VENV, "bin", "python"))
-REMOTE_VENV_PIP = "/".join((REMOTE_VENV, "bin", "pip"))
-REMOTE_EXECUTE = "/".join((REMOTE_DIR, REMOTE_BINARY))
+REMOTE_VENV_PYTHON = os.path.join(REMOTE_VENV, "bin", "python")
+REMOTE_VENV_PIP = os.path.join(REMOTE_VENV, "bin", "pip")
+REMOTE_EXECUTE = os.path.join(REMOTE_DIR, REMOTE_BINARY)
 
 LOCAL_FOLDER = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 
-REQUIREMENTS = open("/".join((
-    LOCAL_FOLDER, "requirements.txt"))).read().strip().replace("\n", " ")
+REQUIREMENTS = open(os.path.join(
+    LOCAL_FOLDER, "requirements.txt")).read().strip().replace("\n", " ")
 
 CERTS_DIR = os.path.join(LOCAL_FOLDER, 'certs')
 
@@ -139,8 +139,8 @@ class Client():
             return self.get_rant(advice)
 
     # TODO: This method is broken somehow. The daemon is sending the rant,
-    # but this guy isn't populating self.rants.  Likely some exception is killing
-    # the thread.
+    # but this guy isn't populating self.rants.  Likely some exception is
+    # killing the thread.
     def rant_listener_func(self):
         socket = self._get_socket(zmq.REP)
         socket.connect("{}://{}:{}".format(self.protocol,
@@ -158,8 +158,8 @@ class Client():
                 try:
                     return self.rants.pop(advice.id)
                 except KeyError:
-                    LOG.debug("rantFactory id {} not found, sleeping {}".format(
-                        advice.id, poll_interval))
+                    LOG.debug("rantFactory id {} not found, sleeping {"
+                              "}".format(advice.id, poll_interval))
                     if poll_interval:
                         sleep(poll_interval)
         else:
@@ -262,8 +262,10 @@ class Client():
             except EnvironmentError:
                 raise EnvironmentError("virtualenv package in required")
 
-            self._exec_command("{} install {}".format(REMOTE_VENV_PIP, REQUIREMENTS))
-            self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP, REMOTE_DIR))
+            self._exec_command("{} install {}".format(REMOTE_VENV_PIP,
+                                                      REQUIREMENTS))
+            self._exec_command("{} install -e {}".format(REMOTE_VENV_PIP,
+                                                         REMOTE_DIR))
 
     def _install_linux(self):
         transport = self._setup_transport()
@@ -321,14 +323,20 @@ class Client():
             self._start_daemon_other()
 
     def _start_daemon_linux(self):
-        self._exec_command(" ".join((
-            REMOTE_VENV_PYTHON, REMOTE_EXECUTE, "> client.log 2>&1 &")))
+        # TODO: Figure out how to get the PID for the started process
+        # so we can kill it later
+        pid = None
+        result = self._exec_command(" ".join((
+            "echo $$ &&", "exec", REMOTE_VENV_PYTHON, REMOTE_EXECUTE,
+            "> client.log 2>&1 &; echo $!")))
+        print(result)
         try:
             self._exec_command("ps -ef | grep therapyst | grep -v grep")
         except EnvironmentError:
             raise EnvironmentError(
                 "Could not start ClientDaemon process on Client {}".format(
                     self.name))
+        return pid
 
     def _start_daemon_other(self):
         # TODO Implement non-linux OS compatibility

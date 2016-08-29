@@ -28,6 +28,7 @@ for member in tests.members:
 tests.start()
 for advice in advicelist:
     tests.give_advice(advice)
-    # result = {member: rant.id for member, rant in tests.hear_rant(advice).items()}
+    result = {member: rant.id for member, rant in tests.hear_rant(advice).items()}
+print([len(elem) for elem in tests._rant_dicts.values()])
 # end = time.time()
 # print(end - start)
